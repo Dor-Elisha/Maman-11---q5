@@ -246,15 +246,45 @@ class_R:
     jr   $ra
     nop
 
-class_lw:  li $v0, 6;  jr $ra; nop
-class_sw:  li $v0, 7;  jr $ra; nop
-class_beq: li $v0, 8;  jr $ra; nop
+class_lw:
+    li  $v0, 6
+    jr  $ra
+    nop
 
-ret_add: li $v0, 1; jr $ra; nop
-ret_sub: li $v0, 2; jr $ra; nop
-ret_and: li $v0, 3; jr $ra; nop
-ret_or:  li $v0, 4; jr $ra; nop
-ret_slt: li $v0, 5; jr $ra; nop
+class_sw:
+    li  $v0, 7
+    jr  $ra
+    nop
+
+class_beq:
+    li  $v0, 8
+    jr  $ra
+    nop
+
+ret_add:
+    li  $v0, 1
+    jr  $ra
+    nop
+
+ret_sub:
+    li  $v0, 2
+    jr  $ra
+    nop
+
+ret_and:
+    li  $v0, 3
+    jr  $ra
+    nop
+
+ret_or:
+    li  $v0, 4
+    jr  $ra
+    nop
+
+ret_slt:
+    li  $v0, 5
+    jr  $ra
+    nop
 
 ############################################################
 # ExtractRegisters
