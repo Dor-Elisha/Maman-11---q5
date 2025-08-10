@@ -1,5 +1,12 @@
+# Title:	Maman 11 - Q5
+# Author:	Dor Elisha
+# Date:		10/08/2025
+# Description:	Analyzes a list of MIPS instructions, classifies them, counts valid/invalid instructions, tracks register usage, and prints warnings and summary statistics.
+# Input:	Instructions are read from the InstrMem array in the data segment.
+# Output:	Prints unknown instructions, warnings, summary statistics, and register usage histogram to
+
+################# Data segment #####################
 .data
-# ----- program data -----
 
 # instruction memory, ends with 0xFFFFFFFF
 InstrMem:
@@ -57,7 +64,7 @@ msg_dollar:             .asciiz "$"
 msg_dash_space:         .asciiz " - "
 msg_times:              .asciiz " times"
 
-
+################# Code segment #####################
 .text
 .globl main
 main:
