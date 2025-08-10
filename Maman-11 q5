@@ -45,10 +45,10 @@ msg_warn_write_zero:    .asciiz "Warning: attempt to write to $zero at index "
 
 # summary
 msg_summary_total:      .asciiz "Total instructions: "
-msg_summary_valid:      .asciiz "Valid: "
-msg_summary_invalid:    .asciiz "Invalid: "
-msg_summary_r:          .asciiz "Type-R: "
-msg_summary_i:          .asciiz "Type-I: "
+msg_summary_valid:      .asciiz "Valid instructions: "
+msg_summary_invalid:    .asciiz "Invalid instructions: "
+msg_summary_r:          .asciiz "R-type instructions: "
+msg_summary_i:          .asciiz "I-type instructions: "
 msg_summary_warnings:   .asciiz "Warnings: "
 
 # register-usage table
@@ -99,7 +99,8 @@ loop_scan:
 
     # R or I bucket, R is 1..5, I is 6..8
     addiu $t5, $zero, 5
-    ble  $v0, $t5, count_R
+    slt  $t7, $t5, $v0          # t7 = (5 < v0) ? 1 : 0
+    beq  $t7, $zero, count_R    # if not (5 < v0) then v0 <= 5
     nop
 
 count_I:
@@ -186,14 +187,27 @@ handle_invalid:
 next_item:
     addiu $s2, $s2, 1           # i++
     addiu $s0, $s0, 4           # ptr++
-    blt  $s2, 50, loop_scan     # safety cap at 50
+    li   $t7, 50
+    slt  $t8, $s2, $t7          # t8 = (i < 50)
+    bne  $t8, $zero, loop_scan
     nop
 
 done_scan:
-    # print summary and register usage
+    # blank line before summary
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+    # print summary
     jal  PrintSummary
     nop
 
+    # blank line before "Register usage:"
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+    # print register-usage table
     la   $a0, RegCounts
     jal  PrintRegisterUsage
     nop
@@ -305,7 +319,8 @@ ExtractRegisters:
 
     # if 1 <= inst_id <= 5 then rd = (word >> 11) & 0x1F, else rd = -1
     addiu $t2, $zero, 5
-    ble   $a1, $t2, _er_check_low
+    slt   $t9, $t2, $a1        # t9 = (5 < inst_id)
+    beq   $t9, $zero, _er_check_low   # if not (5 < id), then id <= 5
     nop
     li    $t0, -1
     la    $t1, last_rd
@@ -355,7 +370,8 @@ CountRegisters:
 
     # count rd only for R-type, and only if rd >= 0
     addiu $t5, $zero, 5
-    bgt   $a1, $t5, _cr_done    # if id > 5, skip rd
+    slt   $t9, $t5, $a1         # t9 = (5 < id)
+    bne   $t9, $zero, _cr_done
     nop
 
     la    $t0, last_rd
@@ -628,21 +644,24 @@ PrintSummary:
 # PrintRegisterUsage
 # a0 = &RegCounts[0]
 PrintRegisterUsage:
+    move $t1, $a0              # keep base BEFORE clobbering $a0
+
     # header
     li   $v0, 4
     la   $a0, msg_reg_usage_header
     syscall
 
-    move $t1, $a0              # t1 = base
     li   $t0, 0                # i = 0
 
 _pru_loop:
-    bgt  $t0, 31, _pru_done
+    li   $t5, 32
+    slt  $t6, $t0, $t5          # t6 = (i < 32)
+    beq  $t6, $zero, _pru_done  # if i >= 32 stop
     nop
 
-    sll  $t2, $t0, 2           # offset = i*4
-    addu $t3, $t1, $t2         # &RegCounts[i]
-    lw   $t4, 0($t3)           # count
+    sll  $t2, $t0, 2            # offset = i*4
+    addu $t3, $t1, $t2          # &RegCounts[i]
+    lw   $t4, 0($t3)            # count
     beq  $t4, $zero, _pru_next
     nop
 
@@ -679,34 +698,35 @@ _pru_done:
     jr   $ra
     nop
 
-############################################################
 # Print exactly 8 hex digits for a 32 bit value in a0
 # Caller prints "0x" prefix separately
 PrintHex8:
     # save ra and temporaries we clobber
-    addiu $sp, $sp, -16
-    sw    $ra, 12($sp)
-    sw    $t0, 8($sp)
-    sw    $t1, 4($sp)
-    sw    $t2, 0($sp)
+    addiu $sp, $sp, -20
+    sw    $ra, 16($sp)
+    sw    $t0, 12($sp)
+    sw    $t1, 8($sp)
+    sw    $t2, 4($sp)
+    sw    $t9, 0($sp)
 
-    li    $t1, 7               # i = 7 down to 0
+    move  $t9, $a0              # keep original word in $t9
+    li    $t1, 7                # i = 7 down to 0
 ph_loop:
-    sll   $t2, $t1, 2          # t2 = i*4
-    srlv  $t0, $a0, $t2        # t0 = a0 >> (i*4)
-    andi  $t0, $t0, 0xF        # nibble
+    sll   $t2, $t1, 2           # t2 = i*4
+    srlv  $t0, $t9, $t2         # t0 = word >> (i*4)
+    andi  $t0, $t0, 0xF         # nibble
 
-    # convert to ASCII
-    slti  $t2, $t0, 10         # if nibble < 10
+    # convert nibble to ASCII
+    slti  $t2, $t0, 10
     bne   $t2, $zero, ph_digit
     nop
-    addiu $t0, $t0, 55         # 'A' is 65, 10 -> 'A'
+    addiu $t0, $t0, 55          # 10..15 -> 'A'..'F'
     b     ph_out
     nop
 ph_digit:
-    addiu $t0, $t0, 48         # '0' is 48
+    addiu $t0, $t0, 48          # 0..9  -> '0'..'9'
 ph_out:
-    li    $v0, 11              # print_char
+    li    $v0, 11               # print_char
     move  $a0, $t0
     syscall
 
@@ -715,10 +735,11 @@ ph_out:
     nop
 
     # restore and return
-    lw    $t2, 0($sp)
-    lw    $t1, 4($sp)
-    lw    $t0, 8($sp)
-    lw    $ra, 12($sp)
-    addiu $sp, $sp, 16
+    lw    $t9, 0($sp)
+    lw    $t2, 4($sp)
+    lw    $t1, 8($sp)
+    lw    $t0, 12($sp)
+    lw    $ra, 16($sp)
+    addiu $sp, $sp, 20
     jr    $ra
     nop
