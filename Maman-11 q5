@@ -1,0 +1,694 @@
+.data
+# ----- program data -----
+
+# instruction memory, ends with 0xFFFFFFFF
+InstrMem:
+    .word 0x012A4020 
+    .word 0x8C910004 
+    .word 0xACB20008 
+    .word 0x11290003 
+    .word 0x01400020 
+    .word 0x8C000010 
+    .word 0xAC13000C 
+    .word 0x003123AB 
+    .word 0xFFFFFFFF
+
+# counters
+total_count:    .word 0
+valid_count:    .word 0
+invalid_count:  .word 0
+r_count:        .word 0
+i_count:        .word 0
+warning_count:  .word 0
+
+# register-usage histogram [32 words]
+RegCounts:      .word 0:32
+
+# scratch, last extracted fields and current context
+last_rs:        .word -1
+last_rt:        .word -1
+last_rd:        .word -1
+current_word:   .word 0
+current_index:  .word 0
+
+# ----- messages -----
+
+# task 1, unknown instruction
+msg_unknown_prefix:     .asciiz "Unknown instruction at index "
+msg_colon_space:        .asciiz ": "
+msg_0x:                 .asciiz "0x"
+msg_newline:            .asciiz "\n"
+
+# warnings
+msg_warn_rs_eq_rt:      .asciiz "Warning: rs == rt at index "
+msg_warn_write_zero:    .asciiz "Warning: attempt to write to $zero at index "
+
+# summary
+msg_summary_total:      .asciiz "Total instructions: "
+msg_summary_valid:      .asciiz "Valid: "
+msg_summary_invalid:    .asciiz "Invalid: "
+msg_summary_r:          .asciiz "Type-R: "
+msg_summary_i:          .asciiz "Type-I: "
+msg_summary_warnings:   .asciiz "Warnings: "
+
+# register-usage table
+msg_reg_usage_header:   .asciiz "Register usage:\n"
+msg_dollar:             .asciiz "$"
+msg_dash_space:         .asciiz " - "
+msg_times:              .asciiz " times"
+
+
+.text
+.globl main
+main:
+    # setup pointers and i
+    la   $s0, InstrMem          # ptr to instruction array
+    li   $s2, 0                 # i = 0
+
+loop_scan:
+    lw   $t0, 0($s0)            # word = *ptr
+    li   $t1, 0xFFFFFFFF
+    beq  $t0, $t1, done_scan    # stop on terminator
+    nop
+
+    # total_count++
+    la   $t2, total_count
+    lw   $t3, 0($t2)
+    addiu $t3, $t3, 1
+    sw   $t3, 0($t2)
+
+    # save current_word and current_index for helpers
+    la   $t4, current_word
+    sw   $t0, 0($t4)
+    la   $t4, current_index
+    sw   $s2, 0($t4)
+
+    # classify
+    move $a0, $t0
+    jal  ClassifyInstruction
+    nop                         # v0 = inst_id
+
+    beq  $v0, $zero, handle_invalid
+    nop
+
+    # valid_count++
+    la   $t2, valid_count
+    lw   $t3, 0($t2)
+    addiu $t3, $t3, 1
+    sw   $t3, 0($t2)
+
+    # R or I bucket, R is 1..5, I is 6..8
+    addiu $t5, $zero, 5
+    ble  $v0, $t5, count_R
+    nop
+
+count_I:
+    la   $t2, i_count
+    lw   $t3, 0($t2)
+    addiu $t3, $t3, 1
+    sw   $t3, 0($t2)
+    b    after_bucket
+    nop
+
+count_R:
+    la   $t2, r_count
+    lw   $t3, 0($t2)
+    addiu $t3, $t3, 1
+    sw   $t3, 0($t2)
+
+after_bucket:
+    # keep inst_id for helpers
+    move  $t6, $v0
+
+    # ExtractRegisters(word, inst_id)
+    move  $a0, $t0              # word
+    move  $a1, $t6              # inst_id
+    jal   ExtractRegisters
+    nop
+
+    # CountRegisters(RegCounts, inst_id)
+    la    $a0, RegCounts        # base of histogram
+    move  $a1, $t6              # inst_id
+    jal   CountRegisters
+    nop
+
+    # CheckWarnings(inst_id) -> v0 = number of warnings
+    move  $a0, $t6
+    jal   CheckWarnings
+    nop
+
+    # warning_count += v0
+    la    $t2, warning_count
+    lw    $t3, 0($t2)
+    addu  $t3, $t3, $v0
+    sw    $t3, 0($t2)
+
+    b     next_item
+    nop
+
+handle_invalid:
+    # invalid_count++
+    la   $t2, invalid_count
+    lw   $t3, 0($t2)
+    addiu $t3, $t3, 1
+    sw   $t3, 0($t2)
+
+    # print: "Unknown instruction at index "
+    li   $v0, 4
+    la   $a0, msg_unknown_prefix
+    syscall
+
+    # print index i
+    li   $v0, 1
+    move $a0, $s2
+    syscall
+
+    # print ": "
+    li   $v0, 4
+    la   $a0, msg_colon_space
+    syscall
+
+    # print "0x"
+    li   $v0, 4
+    la   $a0, msg_0x
+    syscall
+
+    # print 8 hex digits for word
+    move $a0, $t0
+    jal  PrintHex8
+    nop
+
+    # newline
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+next_item:
+    addiu $s2, $s2, 1           # i++
+    addiu $s0, $s0, 4           # ptr++
+    blt  $s2, 50, loop_scan     # safety cap at 50
+    nop
+
+done_scan:
+    # print summary and register usage
+    jal  PrintSummary
+    nop
+
+    la   $a0, RegCounts
+    jal  PrintRegisterUsage
+    nop
+
+    li   $v0, 10
+    syscall
+
+############################################################
+# v0 returns InstId, 0 if invalid
+# a0 holds the 32 bit instruction
+ClassifyInstruction:
+    # opcode = a0 >> 26
+    srl  $t1, $a0, 26
+    beq  $t1, $zero, class_R
+    nop
+
+    li   $t2, 0x23              # lw
+    beq  $t1, $t2, class_lw
+    nop
+    li   $t2, 0x2B              # sw
+    beq  $t1, $t2, class_sw
+    nop
+    li   $t2, 0x04              # beq
+    beq  $t1, $t2, class_beq
+    nop
+
+    move $v0, $zero             # invalid
+    jr   $ra
+    nop
+
+class_R:
+    andi $t2, $a0, 0x003F       # funct
+    li   $t3, 0x20              # add
+    beq  $t2, $t3, ret_add
+    nop
+    li   $t3, 0x22              # sub
+    beq  $t2, $t3, ret_sub
+    nop
+    li   $t3, 0x24              # and
+    beq  $t2, $t3, ret_and
+    nop
+    li   $t3, 0x25              # or
+    beq  $t2, $t3, ret_or
+    nop
+    li   $t3, 0x2A              # slt
+    beq  $t2, $t3, ret_slt
+    nop
+
+    move $v0, $zero             # invalid
+    jr   $ra
+    nop
+
+class_lw:  li $v0, 6;  jr $ra; nop
+class_sw:  li $v0, 7;  jr $ra; nop
+class_beq: li $v0, 8;  jr $ra; nop
+
+ret_add: li $v0, 1; jr $ra; nop
+ret_sub: li $v0, 2; jr $ra; nop
+ret_and: li $v0, 3; jr $ra; nop
+ret_or:  li $v0, 4; jr $ra; nop
+ret_slt: li $v0, 5; jr $ra; nop
+
+############################################################
+# ExtractRegisters
+# a0 = word, a1 = inst_id
+# writes last_rs, last_rt, last_rd
+ExtractRegisters:
+    # rs = (word >> 21) & 0x1F
+    srl   $t0, $a0, 21
+    andi  $t0, $t0, 0x1F
+    la    $t1, last_rs
+    sw    $t0, 0($t1)
+
+    # rt = (word >> 16) & 0x1F
+    srl   $t0, $a0, 16
+    andi  $t0, $t0, 0x1F
+    la    $t1, last_rt
+    sw    $t0, 0($t1)
+
+    # if 1 <= inst_id <= 5 then rd = (word >> 11) & 0x1F, else rd = -1
+    addiu $t2, $zero, 5
+    ble   $a1, $t2, _er_check_low
+    nop
+    li    $t0, -1
+    la    $t1, last_rd
+    sw    $t0, 0($t1)
+    jr    $ra
+    nop
+
+_er_check_low:
+    beq   $a1, $zero, _er_not_r # safety, not expected here
+    nop
+    srl   $t0, $a0, 11
+    andi  $t0, $t0, 0x1F
+    la    $t1, last_rd
+    sw    $t0, 0($t1)
+    jr    $ra
+    nop
+
+_er_not_r:
+    li    $t0, -1
+    la    $t1, last_rd
+    sw    $t0, 0($t1)
+    jr    $ra
+    nop
+
+############################################################
+# CountRegisters
+# a0 = &RegCounts[0], a1 = inst_id
+# uses last_rs, last_rt, last_rd
+CountRegisters:
+    # count rs
+    la    $t0, last_rs
+    lw    $t1, 0($t0)           # t1 = rs
+    sll   $t2, $t1, 2           # offset = rs * 4
+    addu  $t3, $a0, $t2
+    lw    $t4, 0($t3)
+    addiu $t4, $t4, 1
+    sw    $t4, 0($t3)
+
+    # count rt
+    la    $t0, last_rt
+    lw    $t1, 0($t0)           # t1 = rt
+    sll   $t2, $t1, 2
+    addu  $t3, $a0, $t2
+    lw    $t4, 0($t3)
+    addiu $t4, $t4, 1
+    sw    $t4, 0($t3)
+
+    # count rd only for R-type, and only if rd >= 0
+    addiu $t5, $zero, 5
+    bgt   $a1, $t5, _cr_done    # if id > 5, skip rd
+    nop
+
+    la    $t0, last_rd
+    lw    $t1, 0($t0)           # t1 = rd
+    bltz  $t1, _cr_done         # if rd < 0, skip
+    nop
+    sll   $t2, $t1, 2
+    addu  $t3, $a0, $t2
+    lw    $t4, 0($t3)
+    addiu $t4, $t4, 1
+    sw    $t4, 0($t3)
+
+_cr_done:
+    jr    $ra
+    nop
+
+############################################################
+# CheckWarnings
+# a0 = inst_id, returns v0 = number of warnings printed for current instruction
+# uses current_index, current_word, last_rs, last_rt, last_rd
+CheckWarnings:
+    # prologue
+    addiu $sp, $sp, -40
+    sw    $ra, 36($sp)
+    sw    $t0, 32($sp)
+    sw    $t1, 28($sp)
+    sw    $t2, 24($sp)
+    sw    $t3, 20($sp)
+    sw    $t4, 16($sp)
+    sw    $t5, 12($sp)
+    sw    $t6, 8($sp)
+    sw    $t7, 4($sp)
+    sw    $t9, 0($sp)
+
+    move  $t6, $a0              # t6 = inst_id
+    li    $t7, 0                # warnings counter
+
+    # load context
+    la    $t0, last_rs
+    lw    $t0, 0($t0)           # t0 = rs
+    la    $t1, last_rt
+    lw    $t1, 0($t1)           # t1 = rt
+    la    $t2, last_rd
+    lw    $t2, 0($t2)           # t2 = rd
+    la    $t3, current_index
+    lw    $t3, 0($t3)           # t3 = index
+    la    $t4, current_word
+    lw    $t4, 0($t4)           # t4 = word
+
+    # 1) rs == rt for R-type or beq
+    li    $t5, 5
+    slt   $t9, $t5, $t6         # t9 = (5 < id) => id > 5
+    beq   $t9, $zero, _chk_rsrt_maybe_R
+    nop
+    # id > 5, check if beq (id == 8)
+    li    $t5, 8
+    bne   $t6, $t5, _chk_zero_write
+    nop
+    bne   $t0, $t1, _chk_zero_write
+    nop
+    # print "Warning: rs == rt at index "
+    li   $v0, 4
+    la   $a0, msg_warn_rs_eq_rt
+    syscall
+    # print index
+    li   $v0, 1
+    move $a0, $t3
+    syscall
+    # print ": "
+    li   $v0, 4
+    la   $a0, msg_colon_space
+    syscall
+    # print 0x + hex word
+    li   $v0, 4
+    la   $a0, msg_0x
+    syscall
+    move $a0, $t4
+    jal  PrintHex8
+    nop
+    # newline
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+    addiu $t7, $t7, 1
+    b    _chk_zero_write
+    nop
+
+_chk_rsrt_maybe_R:
+    # id <= 5, R-type if id != 0
+    beq   $t6, $zero, _chk_zero_write
+    nop
+    bne   $t0, $t1, _chk_zero_write
+    nop
+    # print R-type rs==rt warning
+    li   $v0, 4
+    la   $a0, msg_warn_rs_eq_rt
+    syscall
+    li   $v0, 1
+    move $a0, $t3
+    syscall
+    li   $v0, 4
+    la   $a0, msg_colon_space
+    syscall
+    li   $v0, 4
+    la   $a0, msg_0x
+    syscall
+    move $a0, $t4
+    jal  PrintHex8
+    nop
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+    addiu $t7, $t7, 1
+
+_chk_zero_write:
+    # 2) attempt to write to $zero
+    # R-type: rd == 0
+    li    $t5, 5
+    slt   $t9, $t5, $t6         # id > 5 ?
+    bne   $t9, $zero, _chk_lw   # if id > 5, skip R test
+    nop
+    beq   $t6, $zero, _chk_lw   # id == 0 not expected, but skip
+    nop
+    bne   $t2, $zero, _chk_lw
+    nop
+    # print write-to-zero warning for R
+    li   $v0, 4
+    la   $a0, msg_warn_write_zero
+    syscall
+    li   $v0, 1
+    move $a0, $t3
+    syscall
+    li   $v0, 4
+    la   $a0, msg_colon_space
+    syscall
+    li   $v0, 4
+    la   $a0, msg_0x
+    syscall
+    move $a0, $t4
+    jal  PrintHex8
+    nop
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+    addiu $t7, $t7, 1
+
+_chk_lw:
+    # lw: rt == 0
+    li    $t5, 6
+    bne   $t6, $t5, _chk_done
+    nop
+    bne   $t1, $zero, _chk_done
+    nop
+    # print write-to-zero warning for lw
+    li   $v0, 4
+    la   $a0, msg_warn_write_zero
+    syscall
+    li   $v0, 1
+    move $a0, $t3
+    syscall
+    li   $v0, 4
+    la   $a0, msg_colon_space
+    syscall
+    li   $v0, 4
+    la   $a0, msg_0x
+    syscall
+    move $a0, $t4
+    jal  PrintHex8
+    nop
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+    addiu $t7, $t7, 1
+
+_chk_done:
+    move  $v0, $t7
+    lw    $t9, 0($sp)
+    lw    $t7, 4($sp)
+    lw    $t6, 8($sp)
+    lw    $t5, 12($sp)
+    lw    $t4, 16($sp)
+    lw    $t3, 20($sp)
+    lw    $t2, 24($sp)
+    lw    $t1, 28($sp)
+    lw    $t0, 32($sp)
+    lw    $ra, 36($sp)
+    addiu $sp, $sp, 40
+    jr    $ra
+    nop
+
+############################################################
+# PrintSummary, prints totals and buckets
+PrintSummary:
+    # Total
+    li   $v0, 4
+    la   $a0, msg_summary_total
+    syscall
+    li   $v0, 1
+    la   $t0, total_count
+    lw   $a0, 0($t0)
+    syscall
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+    # Valid
+    li   $v0, 4
+    la   $a0, msg_summary_valid
+    syscall
+    li   $v0, 1
+    la   $t0, valid_count
+    lw   $a0, 0($t0)
+    syscall
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+    # Invalid
+    li   $v0, 4
+    la   $a0, msg_summary_invalid
+    syscall
+    li   $v0, 1
+    la   $t0, invalid_count
+    lw   $a0, 0($t0)
+    syscall
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+    # Type-R
+    li   $v0, 4
+    la   $a0, msg_summary_r
+    syscall
+    li   $v0, 1
+    la   $t0, r_count
+    lw   $a0, 0($t0)
+    syscall
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+    # Type-I
+    li   $v0, 4
+    la   $a0, msg_summary_i
+    syscall
+    li   $v0, 1
+    la   $t0, i_count
+    lw   $a0, 0($t0)
+    syscall
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+    # Warnings
+    li   $v0, 4
+    la   $a0, msg_summary_warnings
+    syscall
+    li   $v0, 1
+    la   $t0, warning_count
+    lw   $a0, 0($t0)
+    syscall
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+    jr   $ra
+    nop
+
+############################################################
+# PrintRegisterUsage
+# a0 = &RegCounts[0]
+PrintRegisterUsage:
+    # header
+    li   $v0, 4
+    la   $a0, msg_reg_usage_header
+    syscall
+
+    move $t1, $a0              # t1 = base
+    li   $t0, 0                # i = 0
+
+_pru_loop:
+    bgt  $t0, 31, _pru_done
+    nop
+
+    sll  $t2, $t0, 2           # offset = i*4
+    addu $t3, $t1, $t2         # &RegCounts[i]
+    lw   $t4, 0($t3)           # count
+    beq  $t4, $zero, _pru_next
+    nop
+
+    # print "$"
+    li   $v0, 4
+    la   $a0, msg_dollar
+    syscall
+    # print i
+    li   $v0, 1
+    move $a0, $t0
+    syscall
+    # print " - "
+    li   $v0, 4
+    la   $a0, msg_dash_space
+    syscall
+    # print count
+    li   $v0, 1
+    move $a0, $t4
+    syscall
+    # print " times\n"
+    li   $v0, 4
+    la   $a0, msg_times
+    syscall
+    li   $v0, 4
+    la   $a0, msg_newline
+    syscall
+
+_pru_next:
+    addiu $t0, $t0, 1
+    b    _pru_loop
+    nop
+
+_pru_done:
+    jr   $ra
+    nop
+
+############################################################
+# Print exactly 8 hex digits for a 32 bit value in a0
+# Caller prints "0x" prefix separately
+PrintHex8:
+    # save ra and temporaries we clobber
+    addiu $sp, $sp, -16
+    sw    $ra, 12($sp)
+    sw    $t0, 8($sp)
+    sw    $t1, 4($sp)
+    sw    $t2, 0($sp)
+
+    li    $t1, 7               # i = 7 down to 0
+ph_loop:
+    sll   $t2, $t1, 2          # t2 = i*4
+    srlv  $t0, $a0, $t2        # t0 = a0 >> (i*4)
+    andi  $t0, $t0, 0xF        # nibble
+
+    # convert to ASCII
+    slti  $t2, $t0, 10         # if nibble < 10
+    bne   $t2, $zero, ph_digit
+    nop
+    addiu $t0, $t0, 55         # 'A' is 65, 10 -> 'A'
+    b     ph_out
+    nop
+ph_digit:
+    addiu $t0, $t0, 48         # '0' is 48
+ph_out:
+    li    $v0, 11              # print_char
+    move  $a0, $t0
+    syscall
+
+    addiu $t1, $t1, -1
+    bgez  $t1, ph_loop
+    nop
+
+    # restore and return
+    lw    $t2, 0($sp)
+    lw    $t1, 4($sp)
+    lw    $t0, 8($sp)
+    lw    $ra, 12($sp)
+    addiu $sp, $sp, 16
+    jr    $ra
+    nop
