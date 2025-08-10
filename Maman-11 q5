@@ -72,35 +72,35 @@ loop_scan:
     nop
 
     # total_count++
-    la   $t2, total_count
-    lw   $t3, 0($t2)
-    addiu $t3, $t3, 1
-    sw   $t3, 0($t2)
+    la   $t2, total_count    # Load the address of the variable 'total_count' into $t2
+    lw   $t3, 0($t2)         # Load the current value of 'total_count' into $t3
+    addiu $t3, $t3, 1        # Increment the value in $t3 by 1
+    sw   $t3, 0($t2)         # Store the updated value back into 'total_count'
 
     # save current_word and current_index for helpers
-    la   $t4, current_word
-    sw   $t0, 0($t4)
-    la   $t4, current_index
-    sw   $s2, 0($t4)
+    la   $t4, current_word      # Load address of current_word
+    sw   $t0, 0($t4)            # Store current_word
+    la   $t4, current_index     # Load address of current_index
+    sw   $s2, 0($t4)            # Store current_index
 
     # classify
-    move $a0, $t0
-    jal  ClassifyInstruction
+    move $a0, $t0               # instruction word
+    jal  ClassifyInstruction    # ClassifyInstruction
     nop                         # v0 = inst_id
 
-    beq  $v0, $zero, handle_invalid
+    beq  $v0, $zero, handle_invalid # if v0 == 0, handle invalid instruction
     nop
 
     # valid_count++
-    la   $t2, valid_count
-    lw   $t3, 0($t2)
-    addiu $t3, $t3, 1
-    sw   $t3, 0($t2)
+    la   $t2, valid_count          # Load the address of 'valid_count'
+    lw   $t3, 0($t2)               # Load current value
+    addiu $t3, $t3, 1              # Increment the value
+    sw   $t3, 0($t2)               # Store updated value
 
     # R or I bucket, R is 1..5, I is 6..8
     addiu $t5, $zero, 5
-    slt  $t7, $t5, $v0          # t7 = (5 < v0) ? 1 : 0
-    beq  $t7, $zero, count_R    # if not (5 < v0) then v0 <= 5
+    slt  $t7, $t5, $v0              # t7 = (5 < v0) ? 1 : 0
+    beq  $t7, $zero, count_R        # if not (5 < v0) then v0 <= 5
     nop
 
 count_I:
